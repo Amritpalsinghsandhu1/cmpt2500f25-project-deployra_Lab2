@@ -11,26 +11,33 @@ def main():
     args = parser.parse_args()
 
     print("🔧 Using config:", args.config)
-    with open(args.config, "r") as f:
+    with open(args.config) as f:
         cfg = yaml.safe_load(f)
 
-    df_path = "data/processed/df_clean.csv"
-    print("📦 Loading data:", df_path)
-    df = pd.read_csv(df_path)
+    data_path = "data/processed/df_clean.csv"
+    print("📦 Loading:", data_path)
+    df = pd.read_csv(data_path)
 
-    target_col = cfg.get("target", "target")
-    if target_col not in df.columns:
-        raise ValueError(f"Target column '{target_col}' not found. Columns: {list(df.columns)}")
+    # pick the correct target
+    target = cfg.get("target")
+    if target is None:
+        # common CBB columns – change if needed
+        for c in ["listing_type","status","is_sold","Sold","label","target"]:
+            if c in df.columns: target = c; break
+    if target is None or target not in df.columns:
+        raise ValueError(f"Target column not found. Set 'target' in config/train_config.yaml. Columns: {list(df.columns)}")
 
-    X = df.drop(columns=[target_col]); y = df[target_col]
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    print("🎯 Target:", target)
+    X, y = df.drop(columns=[target]), df[target]
 
-    params = cfg["params"]["random_forest"]
-    print("🤖 Training RandomForest with params:", params)
-    model = RandomForestClassifier(**params).fit(X_train, y_train)
-    acc = accuracy_score(y_test, model.predict(X_test))
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    params = cfg.setdefault("params", {}).setdefault("random_forest",
+        {"n_estimators": 100, "max_depth": 10, "min_samples_split": 2, "min_samples_leaf": 1})
+    print("🤖 RandomForest params:", params)
+
+    model = RandomForestClassifier(**params).fit(Xtr, ytr)
+    acc = accuracy_score(yte, model.predict(Xte))
     print(f"✅ Accuracy: {acc:.4f}")
 
     Path("models").mkdir(parents=True, exist_ok=True)
