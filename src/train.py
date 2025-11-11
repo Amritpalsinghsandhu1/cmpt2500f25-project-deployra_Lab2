@@ -1,9 +1,12 @@
 cat > src/train.py << 'PY'
 import argparse, yaml, pandas as pd, joblib
+from pathlib import Path
 from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.pipeline import Pipeline
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
-from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser()
@@ -18,32 +21,47 @@ def main():
     print("📦 Loading:", data_path)
     df = pd.read_csv(data_path)
 
-    # pick the correct target
-    target = cfg.get("target")
-    if target is None:
-        # common CBB columns – change if needed
-        for c in ["listing_type","status","is_sold","Sold","label","target"]:
-            if c in df.columns: target = c; break
-    if target is None or target not in df.columns:
-        raise ValueError(f"Target column not found. Set 'target' in config/train_config.yaml. Columns: {list(df.columns)}")
+    target = cfg.get("target", "listing_type")
+    if target not in df.columns:
+        raise ValueError(f"Target '{target}' not found. Columns: {list(df.columns)}")
 
     print("🎯 Target:", target)
-    X, y = df.drop(columns=[target]), df[target]
+    y = df[target]
+    X = df.drop(columns=[target])
 
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Split numeric vs categorical features automatically
+    cat_cols = X.select_dtypes(include=["object","category","string"]).columns.tolist()
+    num_cols = X.select_dtypes(include=["number","bool"]).columns.tolist()
+    print(f"🧱 Features -> cat: {len(cat_cols)} | num: {len(num_cols)}")
 
-    params = cfg.setdefault("params", {}).setdefault("random_forest",
-        {"n_estimators": 100, "max_depth": 10, "min_samples_split": 2, "min_samples_leaf": 1})
-    print("🤖 RandomForest params:", params)
+    # Preprocess: OneHot for categoricals (ignore unseen), passthrough numerics
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), cat_cols),
+            ("num", "passthrough", num_cols),
+        ],
+        remainder="drop"
+    )
 
-    model = RandomForestClassifier(**params).fit(Xtr, ytr)
+    rf_params = cfg.setdefault("params", {}).setdefault("random_forest", {
+        "n_estimators": 200, "max_depth": 12, "min_samples_split": 2, "min_samples_leaf": 1
+    })
+    print("🤖 RF params:", rf_params)
+
+    model = Pipeline([
+        ("prep", preprocessor),
+        ("clf", RandomForestClassifier(**rf_params))
+    ])
+
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y if y.nunique()<50 else None)
+    model.fit(Xtr, ytr)
     acc = accuracy_score(yte, model.predict(Xte))
     print(f"✅ Accuracy: {acc:.4f}")
 
     Path("models").mkdir(parents=True, exist_ok=True)
-    out = Path("models/random_forest_latest.pkl").resolve()
+    out = Path("models/cbb_rf_pipeline.pkl").resolve()
     joblib.dump(model, out)
-    print("💾 Model saved to:", out)
+    print("💾 Pipeline saved to:", out)
 
 if __name__ == "__main__":
     main()
