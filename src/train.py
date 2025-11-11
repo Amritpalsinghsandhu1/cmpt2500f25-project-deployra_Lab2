@@ -24,20 +24,25 @@ def main():
     target = cfg.get("target", "listing_type")
     if target not in df.columns:
         raise ValueError(f"Target '{target}' not found. Columns: {list(df.columns)}")
-
     print("🎯 Target:", target)
+
     y = df[target]
     X = df.drop(columns=[target])
 
-    # Split numeric vs categorical features automatically
+    # Split columns by dtype
     cat_cols = X.select_dtypes(include=["object","category","string"]).columns.tolist()
     num_cols = X.select_dtypes(include=["number","bool"]).columns.tolist()
-    print(f"🧱 Features -> cat: {len(cat_cols)} | num: {len(num_cols)}")
+    print(f"🧱 Features -> categorical: {len(cat_cols)} | numerical: {len(num_cols)}")
 
-    # Preprocess: OneHot for categoricals (ignore unseen), passthrough numerics
+    # OneHot for categoricals (compatible with different sklearn versions)
+    try:
+        ohe = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
+    except TypeError:
+        ohe = OneHotEncoder(handle_unknown="ignore", sparse=False)
+
     preprocessor = ColumnTransformer(
         transformers=[
-            ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), cat_cols),
+            ("cat", ohe, cat_cols),
             ("num", "passthrough", num_cols),
         ],
         remainder="drop"
@@ -53,7 +58,11 @@ def main():
         ("clf", RandomForestClassifier(**rf_params))
     ])
 
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y if y.nunique()<50 else None)
+    Xtr, Xte, ytr, yte = train_test_split(
+        X, y, test_size=0.2, random_state=42,
+        stratify=y if y.nunique() < 50 else None
+    )
+
     model.fit(Xtr, ytr)
     acc = accuracy_score(yte, model.predict(Xte))
     print(f"✅ Accuracy: {acc:.4f}")
