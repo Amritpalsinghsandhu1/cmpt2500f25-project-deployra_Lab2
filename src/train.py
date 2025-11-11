@@ -1,39 +1,44 @@
-cat > src/train.py << 'PY'
-import argparse, yaml, numpy as np, joblib
+# src/train.py
+import argparse, yaml, pandas as pd, joblib
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score
 from pathlib import Path
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
-from sklearn.linear_model import LogisticRegression
-
-def load_yaml(p):
-    with open(p, "r") as f: return yaml.safe_load(f)
-
-def get_model(kind, params):
-    if kind == "random_forest": return RandomForestClassifier(**params)
-    if kind == "logistic_regression": return LogisticRegression(**params)
-    if kind == "gradient_boosting": return GradientBoostingClassifier(**params)
-    if kind == "adaboost": return AdaBoostClassifier(**params)
-    raise ValueError(f"Unknown model type: {kind}")
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="config/train_config.yaml")
     args = parser.parse_args()
 
-    cfg = load_yaml(args.config)
-    model_type = cfg["model"]["type"]
-    params = cfg["params"][model_type]
+    # Load configuration
+    with open(args.config, "r") as f:
+        cfg = yaml.safe_load(f)
 
-    data = np.load("data/processed/preprocessed_data.npy", allow_pickle=True).item()
-    X_train, y_train = data["X_train"], data["y_train"]
+    # Load the cleaned dataset
+    df = pd.read_csv("data/processed/df_clean.csv")
+    target_col = cfg.get("target", "target")  # default fallback
 
-    model = get_model(model_type, params)
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+
+    # Model training
+    model = RandomForestClassifier(**cfg["params"]["random_forest"])
     model.fit(X_train, y_train)
 
+    # Evaluate
+    y_pred = model.predict(X_test)
+    acc = accuracy_score(y_test, y_pred)
+    print(f"✅ Model trained with accuracy: {acc:.4f}")
+
+    # Save model
     Path("models").mkdir(exist_ok=True)
-    out = f"models/{model_type}_latest.pkl"
-    joblib.dump(model, out)
-    print(f"✅ Model saved: {out}")
+    joblib.dump(model, "models/random_forest_latest.pkl")
+    print("💾 Model saved to models/random_forest_latest.pkl")
 
 if __name__ == "__main__":
     main()
-PY
